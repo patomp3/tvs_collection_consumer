@@ -170,10 +170,10 @@ func (r ReceiveQueue) Receive(ch *amqp.Channel) {
 							res, _ = DisconnectPTP(req)
 							log.Printf("## DisconnectPTP Result = %s %d, %s", res.Status, res.ErrorCode, res.ErrorDescription)
 						case "RECONNECT":
-							res, _ = Reconnect(req)
+							res, _ = Reconnect(req, "Reconnect")
 							log.Printf("## Reconnect Result = %s %d, %s", res.Status, res.ErrorCode, res.ErrorDescription)
 						case "RECONPTP":
-							res, _ = ReconnectPTP(req)
+							res, _ = Reconnect(req, "ReconnectPTP")
 							log.Printf("## ReconnectPTP Result = %s %d, %s", res.Status, res.ErrorCode, res.ErrorDescription)
 						}
 

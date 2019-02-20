@@ -20,6 +20,8 @@ type appConfig struct {
 	cancelURL     string
 
 	updateOrderURL string
+
+	ccbsAccountURL string
 }
 
 var cfg appConfig
@@ -53,12 +55,14 @@ func main() {
 		cfg.reconnectURL = viper.GetString(env + ".reconnecturl")
 		cfg.cancelURL = viper.GetString(env + ".cancelurl")
 		cfg.updateOrderURL = viper.GetString(env + ".updateorderurl")
+		cfg.ccbsAccountURL = viper.GetString(env + ".CCBSAccountServiceURL")
 
 		log.Printf("## Loading Configuration")
 		log.Printf("## Env\t= %s", env)
 	}
 
-	q := ReceiveQueue{cfg.queueURL, cfg.queueName}
+	/*q := ReceiveQueue{cfg.queueURL, cfg.queueName}
 	ch := q.Connect()
-	q.Receive(ch)
+	q.Receive(ch)*/
+
 }

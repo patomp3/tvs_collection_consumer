@@ -10,6 +10,7 @@ cancelurl = "http://localhost:8080/cancel"
 queueurl = "amqp://admin:admin@172.19.218.104:5672/"
 queuename = "tvs_collection"
 updateorderurl = "http://localhost:8000/updateorder"
+CCBSAccountServiceURL = "http://172.22.235.87/CCBSICCService/AccountService.svc"
 
 
 [production]
@@ -22,3 +23,4 @@ cancelurl = "http://localhost:8080/cancel"
 queueurl = "amqp://admin:admin@172.19.218.104:5672/"
 queuename = "tvs_collection"
 updateorderurl = "http://localhost:8000/updateorder"
+CCBSAccountServiceURL = "http://172.22.235.87/CCBSICCService/AccountService.svc"
