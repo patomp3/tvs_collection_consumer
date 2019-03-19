@@ -1,17 +1,20 @@
 # Application config file.
 
+appName = "TVS_Collection_Consumer"
+env = "DEV-UAT62"
+
 [development]
-DBICC = "SIT62"
+DBICC = "UAT62"
 DBATB2 = "QED"
 DBPED = "QED"
-disconnecturl = "http://localhost:8080/disconnect"
-reconnecturl = "http://localhost:8080/reconnect"
-cancelurl = "http://localhost:8080/cancel"
+disconnecturl = "http://iccreconnect-uat2.icc.arctic.true.th/disconnect"
+reconnecturl = "http://iccreconnect-uat2.icc.arctic.true.th/reconnect"
+cancelurl = "http://iccreconnect-uat2.icc.arctic.true.th/cancel"
 queueurl = "amqp://admin:admin@172.19.218.104:5672/"
 queuename = "tvs_collection"
-updateorderurl = "http://localhost:8000/updateorder"
-CCBSAccountServiceURL = "http://172.22.235.87/CCBSICCService/AccountService.svc"
-
+updateorderurl = "http://wfacore-uat2.icc.arctic.true.th/updateorder"
+updatepayloadurl = "http://wfacore-uat2.icc.arctic.true.th/updatepayload"
+ccbsaccountserviceurl = "http://172.22.202.55/CCBSICCService/AccountService.svc"
 
 [production]
 DBICC = "SIT62"
@@ -23,4 +26,5 @@ cancelurl = "http://localhost:8080/cancel"
 queueurl = "amqp://admin:admin@172.19.218.104:5672/"
 queuename = "tvs_collection"
 updateorderurl = "http://localhost:8000/updateorder"
-CCBSAccountServiceURL = "http://172.22.235.87/CCBSICCService/AccountService.svc"
+updatepayloadurl = "http://localhost:8000/updatepayload"
+ccbsaccountserviceurl = "http://172.22.235.87/CCBSICCService/AccountService.svc"

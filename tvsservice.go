@@ -12,31 +12,34 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	smslog "github.com/patomp3/smslogs"
+	sms "github.com/patomp3/smsservices"
 )
 
 // OrderRequest Object
 type OrderRequest struct {
-	TVSCustomer        string `json:"TVSCustomer"`
-	ActionCode         string `json:"ActionCode"`
-	ActivityReasonCode string `json:"ActivityReasonCode"`
-}
-
-// Init add initial value
-func (o *OrderRequest) Init(tvsCustomer string, actionCode string, activityReasonCode string) {
-	o.TVSCustomer = tvsCustomer
-	o.ActionCode = actionCode
-	o.ActivityReasonCode = activityReasonCode
+	TVSCustomer        string `json:"tvscustomer"`
+	ActionCode         string `json:"action_code"`
+	ActivityReasonCode string `json:"activity_reason_code"`
+	OrderTransID       string `json:"order_trans_id"`
 }
 
 // OrderResponse Object
 type OrderResponse struct {
-	ErrorCode        int    `json:"ErrorCode"`
-	ErrorDescription string `json:"ErrorDescription"`
-	Status           string `json:"Status"`
+	ErrorCode        int    `json:"error_code"`
+	ErrorDescription string `json:"error_description"`
+	Status           string `json:"status"`
+	IsSuspend        bool   `json:"is_suspend"`
 }
 
+// TVSService for add initial value
+/*func TVSService(tvsCustomer string, actionCode string, activityReasonCode string, orderTransID string) *OrderRequest {
+	return &OrderRequest{TVSCustomer: tvsCustomer, ActionCode: actionCode, ActivityReasonCode: activityReasonCode, OrderTransID: orderTransID}
+}*/
+
 // ServiceRequest for recon struct
-type ServiceRequest struct {
+/*type ServiceRequest struct {
 	ByUser struct {
 		ByChannel string `json:"byChannel"`
 		ByUser    string `json:"byUser"`
@@ -54,7 +57,7 @@ type ServiceRequest struct {
 		Target     int    `json:"Target"`
 		TargetDate string `json:"TargetDate"`
 	} `json:"Target"`
-}
+}*/
 
 // ServiceResult for recon result
 type ServiceResult struct {
@@ -130,8 +133,8 @@ type GetBalance struct {
 	} `xml:"Body"`
 }
 
-// Cancel Service
-func Cancel(req OrderRequest) (OrderResponse, error) {
+// Cancel Service for collection service to cancel tvs
+func (req OrderRequest) Cancel() (OrderResponse, error) {
 	var result OrderResponse
 
 	log.Printf("## Process Cancel Service")
@@ -141,7 +144,8 @@ func Cancel(req OrderRequest) (OrderResponse, error) {
 	var productID int
 	var commercialProductID int
 	var reason int
-	bResult := ExecuteStoreProcedure(cfg.dbICC, "begin PK_CCBS_COLLECTION.GetCancelAgreementDetail(:1,:2,:3,:4); end;", req.TVSCustomer, req.ActionCode,
+	dbICC := sms.New(cfg.dbICC)
+	bResult := dbICC.ExecuteStoreProcedure("begin PK_CCBS_COLLECTION.GetCancelAgreementDetail(:1,:2,:3,:4); end;", req.TVSCustomer, req.ActionCode,
 		req.ActivityReasonCode, sql.Out{Dest: &rs})
 	if bResult && rs != nil {
 		values := make([]driver.Value, len(rs.Columns()))
@@ -196,21 +200,43 @@ func Cancel(req OrderRequest) (OrderResponse, error) {
 		}
 	}
 
+	// Write log to stdoutput
+	appFunc := "Cancel"
+	jsonReq, _ := json.Marshal(req)
+	jsonRes, _ := json.Marshal(result)
+
+	mLog := smslog.New(cfg.appName)
+	mLog.OrderDate = ""
+	mLog.OrderNo = ""
+	mLog.OrderType = ""
+	mLog.TVSNo = ""
+	tag := []string{cfg.env, cfg.appName, appFunc, "INFO"}
+	mLog.Tags = tag
+	mLog.PrintLog(smslog.INFO, appFunc, req.OrderTransID, string(jsonReq), string(jsonRes))
+	// End Write log
+
 	return result, nil
 }
 
-// Disconnect Service
-func Disconnect(req OrderRequest) (OrderResponse, error) {
+// Disconnect Service for collection service to disconnect tvs
+func (req OrderRequest) Disconnect(disconType string) (OrderResponse, error) {
 	var result OrderResponse
 
-	log.Printf("## Process Disconnecct Service")
+	log.Printf("## Process " + disconType + " Service")
 
 	// get product to disconnect
 	var rs driver.Rows
 	var productID int
 	var commercialProductID int
 	var reason int
-	bResult := ExecuteStoreProcedure(cfg.dbICC, "begin PK_CCBS_COLLECTION.GetDisconAgreementDetail(:1,:2,:3,:4); end;", req.TVSCustomer, req.ActionCode,
+	var disconSQL string
+	if disconType == "Disconnect" {
+		disconSQL = "begin PK_CCBS_COLLECTION.GetDisconAgreementDetail(:1,:2,:3,:4); end;"
+	} else {
+		disconSQL = "begin PK_CCBS_COLLECTION.GetDisconPTPAgreementDetail(:1,:2,:3,:4); end;"
+	}
+	dbICC := sms.New(cfg.dbICC)
+	bResult := dbICC.ExecuteStoreProcedure(disconSQL, req.TVSCustomer, req.ActionCode,
 		req.ActivityReasonCode, sql.Out{Dest: &rs})
 	if bResult && rs != nil {
 		values := make([]driver.Value, len(rs.Columns()))
@@ -223,7 +249,7 @@ func Disconnect(req OrderRequest) (OrderResponse, error) {
 			commercialProductID, _ = strconv.Atoi(strconv.FormatInt(values[1].(int64), 10))
 			reason, _ = strconv.Atoi(values[2].(string))
 
-			log.Printf("## Product Disconnect = %d %d %d", productID, commercialProductID, reason)
+			log.Printf("## Product "+disconType+" = %d %d %d", productID, commercialProductID, reason)
 
 			// Call Service to disconnect
 			var serviceRes ServiceResult
@@ -261,23 +287,23 @@ func Disconnect(req OrderRequest) (OrderResponse, error) {
 		if !haveProduct {
 			result.Status = "true"
 			result.ErrorCode = 0
-			result.ErrorDescription = "No products to disconnect"
+			result.ErrorDescription = "No products to " + disconType
 		}
 	}
 
 	// Disconnect all child account
 	var rsChild driver.Rows
 	var childAccount int
-	bResult = ExecuteStoreProcedure(cfg.dbICC, "begin PK_CCBS_COLLECTION.GetChildAccount(:1,:2,:3,:4); end;", req.TVSCustomer, req.ActionCode,
+	bResult = dbICC.ExecuteStoreProcedure("begin PK_CCBS_COLLECTION.GetChildAccount(:1,:2,:3,:4); end;", req.TVSCustomer, req.ActionCode,
 		req.ActivityReasonCode, sql.Out{Dest: &rsChild})
 	if bResult && rsChild != nil {
 		values := make([]driver.Value, len(rs.Columns()))
-		log.Printf("## Process to disconnecct child account")
+		log.Printf("## Process to " + disconType + " child account")
 
 		for rsChild.Next(values) == nil {
 			childAccount, _ = strconv.Atoi(strconv.FormatInt(values[0].(int64), 10))
 
-			log.Printf("## Product Disconnect = %d %d %d", productID, commercialProductID, reason)
+			log.Printf("## Product "+disconType+" = %d %d %d", productID, commercialProductID, reason)
 
 			// Call Service to disconnect
 			var serviceRes ServiceResult
@@ -309,18 +335,218 @@ func Disconnect(req OrderRequest) (OrderResponse, error) {
 					result.ErrorDescription = serviceRes.ErrorDesc
 				}
 			}
-			if childAccount == 0 {
-				log.Printf("## No account child to disconnect")
-			}
 		}
 	}
 	// End Disconnect all child
+
+	// Write log to stdoutput
+	appFunc := disconType
+	jsonReq, _ := json.Marshal(req)
+	jsonRes, _ := json.Marshal(result)
+
+	mLog := smslog.New(cfg.appName)
+	mLog.OrderDate = ""
+	mLog.OrderNo = ""
+	mLog.OrderType = ""
+	mLog.TVSNo = ""
+	tag := []string{cfg.env, cfg.appName, appFunc, "INFO"}
+	mLog.Tags = tag
+	mLog.PrintLog(smslog.INFO, appFunc, req.OrderTransID, string(jsonReq), string(jsonRes))
+	// End Write log
+
+	return result, nil
+}
+
+// Reconnect Service
+func (req OrderRequest) Reconnect(reconType string) (OrderResponse, error) {
+	var result OrderResponse
+
+	log.Printf("## Process " + reconType + " Service")
+
+	isAllow := 1
+	isSuspend := false
+	// ############# Verify Profile to reconnect
+	// ## check cmdu
+	isCMDU := isCMDUCustomer(req.TVSCustomer)
+	if isCMDU == 1 {
+		// TODO - Sent Event 133 for CMDU
+		isSuspend = true
+
+		isAllow = 0
+	}
+	// ## end check cmdu
+
+	// ## get child account
+	childCnt := getChildAccountCount(req.TVSCustomer)
+	if childCnt > 0 {
+		// TODO - Sent Event 133 for parent
+		isSuspend = true
+
+		// TODO - Sent Event 133 for all child account
+		var rsChild driver.Rows
+		var reconSQL string
+		if reconType == "Reconnect" {
+			reconSQL = "begin PK_CCBS_COLLECTION.GetReconAgreementDetail(:1,:2,:3,:4); end;"
+		} else {
+			reconSQL = "begin PK_CCBS_COLLECTION.GetReconPTPAgreementDetail(:1,:2,:3,:4); end;"
+		}
+		dbICC := sms.New(cfg.dbICC)
+		bResult := dbICC.ExecuteStoreProcedure(reconSQL, req.TVSCustomer, req.ActionCode,
+			req.ActivityReasonCode, sql.Out{Dest: &rsChild})
+		if bResult && rsChild != nil {
+			values := make([]driver.Value, len(rsChild.Columns()))
+			for rsChild.Next(values) == nil {
+				// TODO - Sent Event 133 for all child account
+				isSuspend = true
+			}
+		}
+		isAllow = 0
+	}
+	// ## end get child account
+
+	// ## SPActivityReason for reason 473 >> MANRS
+	var ccbsBalance float64
+	spReason := 0
+	isPaymentNoReconFee := 0
+	if req.ActivityReasonCode == "MANRS" {
+		spReason = 473
+	} else {
+		ccbsAccount := getCCBSAccountByTVSCustomer(req.TVSCustomer)
+		ccbsBalance := getCCBSAccountBalance(ccbsAccount)
+
+		isPaymentNoReconFee = 1
+		// TODO - Sent Event 133 for payment not cover recon fee
+		isSuspend = true
+		isAllow = 0
+		_ = ccbsBalance
+	}
+
+	if isAllow == 1 {
+		// get product to Reconnect
+		var rs driver.Rows
+		var productID int
+		var commercialProductID int
+		var profile string
+		var reason int
+		//var reconfeeAmt goracle.Number
+		var reconSQL string
+		if reconType == "Reconnect" {
+			reconSQL = "begin PK_CCBS_COLLECTION.GetReconAgreementDetail(:1,:2,:3,:4); end;"
+		} else {
+			reconSQL = "begin PK_CCBS_COLLECTION.GetReconPTPAgreementDetail(:1,:2,:3,:4); end;"
+		}
+		dbICC := sms.New(cfg.dbICC)
+		bResult := dbICC.ExecuteStoreProcedure(reconSQL, req.TVSCustomer, req.ActionCode,
+			req.ActivityReasonCode, sql.Out{Dest: &rs})
+		if bResult && rs != nil {
+			values := make([]driver.Value, len(rs.Columns()))
+			// ok
+			haveProduct := false
+			for rs.Next(values) == nil {
+
+				haveProduct = true
+
+				productID, _ = strconv.Atoi(strconv.FormatInt(values[0].(int64), 10))
+				commercialProductID, _ = strconv.Atoi(strconv.FormatInt(values[1].(int64), 10))
+				profile = values[2].(string)
+				reason, _ = strconv.Atoi(strconv.FormatInt(values[3].(int64), 10))
+				//for special activity reason >> 473 recon dnp except recon fee
+				if spReason != 0 {
+					reason = 473
+				}
+				reconfeeAmt := values[4].(float64)
+				if ccbsBalance > reconfeeAmt {
+					// TODO - Sent Event 133 for all child account
+					isSuspend = true
+
+					break //end loop
+				}
+
+				log.Printf("## Product %s = %d %d %s %d %f", reconType, productID, commercialProductID, profile, reason, reconfeeAmt)
+
+				// Call Service to Reconnect
+				var serviceRes ServiceResult
+
+				strReq := "{\r\n\t\"ByUser\":{\r\n\t\t\"byChannel\":\"#BYCHANNEL\",\r\n\t\t\"byUser\":\"#BYUSER\"\r\n\t},\r\n\t\"Customer\":{\r\n\t\t\"CustomerID\":#CUSTOMERID\r\n\t},\r\n\t\"Product\":{\r\n\t\t\"Product\":[{\r\n\t\t\t\"ProductId\":#PRODUCTID\t\t\r\n\t\t}]\r\n\t},\r\n\t\"Reason\":#REASON,\r\n\t\"Target\":{\r\n\t\t\"Target\":#TARGET,\r\n\t\t\"TargetDate\":\"\"\r\n\t}\r\n}"
+				strReq = strings.Replace(strReq, "#BYCHANNEL", "", -1)
+				strReq = strings.Replace(strReq, "#BYUSER", "BILL-COL", -1)
+				strReq = strings.Replace(strReq, "#CUSTOMERID", req.TVSCustomer, -1)
+				strReq = strings.Replace(strReq, "#PRODUCTID", strconv.Itoa(productID), -1)
+				strReq = strings.Replace(strReq, "#REASON", strconv.Itoa(reason), -1)
+				strReq = strings.Replace(strReq, "#TARGET", "0", -1)
+
+				req := []byte(strReq)
+
+				response, err := http.Post(cfg.reconnectURL, "application/json", bytes.NewBuffer(req))
+				if err != nil {
+					log.Printf("The HTTP request failed with error %s", err)
+				} else {
+					data, _ := ioutil.ReadAll(response.Body)
+					//fmt.Println(string(data))
+					//myReturn = json.Unmarshal(string(data))
+					err = json.Unmarshal(data, &serviceRes)
+					if err != nil {
+						//panic(err)
+						log.Printf("The HTTP response failed with error %s", err)
+					} else {
+						log.Printf("## Result >> %d %d %s", serviceRes.ProductID, serviceRes.ErrorCode, serviceRes.ErrorDesc)
+						result.Status = serviceRes.ResultValue
+						result.ErrorCode = serviceRes.ErrorCode
+						result.ErrorDescription = serviceRes.ErrorDesc
+						result.IsSuspend = isSuspend
+					}
+				}
+			}
+
+			if !haveProduct {
+				result.Status = "true"
+				result.ErrorCode = 0
+				result.ErrorDescription = "No products to reconnect"
+				result.IsSuspend = isSuspend
+			}
+		}
+	} else {
+		//### do something
+		// todo
+
+		if isCMDU == 1 {
+			result.Status = "true"
+			result.ErrorCode = 0
+			result.ErrorDescription = "This tvs profile is CMDU customer"
+			result.IsSuspend = isSuspend
+		} else if isPaymentNoReconFee == 1 {
+			result.Status = "true"
+			result.ErrorCode = 0
+			result.ErrorDescription = "Payment not cover recon fee"
+			result.IsSuspend = isSuspend
+		} else {
+			result.Status = "true"
+			result.ErrorCode = 0
+			result.ErrorDescription = "This customer not allow to reconnect"
+		}
+
+	}
+
+	// Write log to stdoutput
+	appFunc := reconType
+	jsonReq, _ := json.Marshal(req)
+	jsonRes, _ := json.Marshal(result)
+
+	mLog := smslog.New(cfg.appName)
+	mLog.OrderDate = ""
+	mLog.OrderNo = ""
+	mLog.OrderType = ""
+	mLog.TVSNo = ""
+	tag := []string{cfg.env, cfg.appName, appFunc, "INFO"}
+	mLog.Tags = tag
+	mLog.PrintLog(smslog.INFO, appFunc, req.OrderTransID, string(jsonReq), string(jsonRes))
+	// End Write log
 
 	return result, nil
 }
 
 // DisconnectPTP Service
-func DisconnectPTP(req OrderRequest) (OrderResponse, error) {
+/*func DisconnectPTP(req OrderRequest) (OrderResponse, error) {
 	var result OrderResponse
 
 	log.Printf("## Process DisconnectPTP Service")
@@ -437,12 +663,13 @@ func DisconnectPTP(req OrderRequest) (OrderResponse, error) {
 	// End Disconnect all child
 
 	return result, nil
-}
+}*/
 
 func isCMDUCustomer(tvsCustomer string) int {
 	isCMDU := 0
 	aSQL := "select pk_ccbs_collection.IsCMDUCustomer(" + tvsCustomer + ") allow from dual"
-	rows, err := SelectSQL(cfg.dbICC, aSQL)
+	dbICC := sms.New(cfg.dbICC)
+	rows, err := dbICC.SelectSQL(aSQL)
 	// close database connection after this main function finished
 	defer rows.Close()
 	if err != nil {
@@ -460,7 +687,8 @@ func getChildAccountCount(tvsCustomer string) int {
 	cntChild := 0
 	aSQL := "select pk_ccbs_collection.GetChildAccountCount(" + tvsCustomer + ") cnt from dual"
 
-	rows, err := SelectSQL(cfg.dbICC, aSQL)
+	dbICC := sms.New(cfg.dbICC)
+	rows, err := dbICC.SelectSQL(aSQL)
 	// close database connection after this main function finished
 	defer rows.Close()
 	if err != nil {
@@ -480,7 +708,8 @@ func getChildAccountCount(tvsCustomer string) int {
 func getCCBSAccountByTVSCustomer(tvsCustomer string) int {
 	ccbsAccount := 0
 	aSQL := "select PK_CCBS_ICCSERVICE.GetCCBSAccountByTVSCustomer(" + tvsCustomer + ") ccbsacct from dual"
-	rows, err := SelectSQL(cfg.dbICC, aSQL)
+	dbICC := sms.New(cfg.dbICC)
+	rows, err := dbICC.SelectSQL(aSQL)
 	// close database connection after this main function finished
 	defer rows.Close()
 	if err != nil {
@@ -557,167 +786,6 @@ func getCCBSAccountBalance(ccbsAccount int) float64 {
 	}
 
 	return acctBalance
-}
-
-// Reconnect Service
-func Reconnect(req OrderRequest, reconType string) (OrderResponse, error) {
-	var result OrderResponse
-
-	log.Printf("## Process " + reconType + " Service")
-
-	isAllow := 1
-	// ############# Verify Profile to reconnect
-	// ## check cmdu
-	isCMDU := isCMDUCustomer(req.TVSCustomer)
-	if isCMDU == 1 {
-		// TODO - Sent Event 133 for CMDU
-
-		isAllow = 0
-	}
-	// ## end check cmdu
-
-	// ## get child account
-	childCnt := getChildAccountCount(req.TVSCustomer)
-	if childCnt > 0 {
-		// TODO - Sent Event 133 for parent
-
-		// TODO - Sent Event 133 for all child account
-		var rsChild driver.Rows
-		var reconSQL string
-		if reconType == "Reconnect" {
-			reconSQL = "begin PK_CCBS_COLLECTION.GetReconAgreementDetail(:1,:2,:3,:4); end;"
-		} else {
-			reconSQL = "begin PK_CCBS_COLLECTION.GetReconPTPAgreementDetail(:1,:2,:3,:4); end;"
-		}
-		bResult := ExecuteStoreProcedure(cfg.dbICC, reconSQL, req.TVSCustomer, req.ActionCode,
-			req.ActivityReasonCode, sql.Out{Dest: &rsChild})
-		if bResult && rsChild != nil {
-			values := make([]driver.Value, len(rsChild.Columns()))
-			for rsChild.Next(values) == nil {
-				// TODO - Sent Event 133 for all child account
-
-			}
-		}
-		isAllow = 0
-	}
-	// ## end get child account
-
-	// ## SPActivityReason for reason 473 >> MANRS
-	var ccbsBalance float64
-	spReason := 0
-	isPaymentNoReconFee := 0
-	if req.ActivityReasonCode == "MANRS" {
-		spReason = 473
-	} else {
-		ccbsAccount := getCCBSAccountByTVSCustomer(req.TVSCustomer)
-		ccbsBalance := getCCBSAccountBalance(ccbsAccount)
-
-		isPaymentNoReconFee = 1
-		isAllow = 0
-		_ = ccbsBalance
-	}
-
-	if isAllow == 1 {
-		// get product to Reconnect
-		var rs driver.Rows
-		var productID int
-		var commercialProductID int
-		var profile string
-		var reason int
-		//var reconfeeAmt goracle.Number
-		var reconSQL string
-		if reconType == "Reconnect" {
-			reconSQL = "begin PK_CCBS_COLLECTION.GetReconAgreementDetail(:1,:2,:3,:4); end;"
-		} else {
-			reconSQL = "begin PK_CCBS_COLLECTION.GetReconPTPAgreementDetail(:1,:2,:3,:4); end;"
-		}
-		bResult := ExecuteStoreProcedure(cfg.dbICC, reconSQL, req.TVSCustomer, req.ActionCode,
-			req.ActivityReasonCode, sql.Out{Dest: &rs})
-		if bResult && rs != nil {
-			values := make([]driver.Value, len(rs.Columns()))
-			// ok
-			haveProduct := false
-			for rs.Next(values) == nil {
-
-				haveProduct = true
-
-				productID, _ = strconv.Atoi(strconv.FormatInt(values[0].(int64), 10))
-				commercialProductID, _ = strconv.Atoi(strconv.FormatInt(values[1].(int64), 10))
-				profile = values[2].(string)
-				reason, _ = strconv.Atoi(strconv.FormatInt(values[3].(int64), 10))
-				//for special activity reason >> 473 recon dnp except recon fee
-				if spReason != 0 {
-					reason = 473
-				}
-				reconfeeAmt := values[4].(float64)
-				if ccbsBalance > reconfeeAmt {
-					// TODO - Sent Event 133 for all child account
-
-					break //end loop
-				}
-
-				log.Printf("## Product %s = %d %d %s %d %f", reconType, productID, commercialProductID, profile, reason, reconfeeAmt)
-
-				// Call Service to Reconnect
-				var serviceRes ServiceResult
-
-				strReq := "{\r\n\t\"ByUser\":{\r\n\t\t\"byChannel\":\"#BYCHANNEL\",\r\n\t\t\"byUser\":\"#BYUSER\"\r\n\t},\r\n\t\"Customer\":{\r\n\t\t\"CustomerID\":#CUSTOMERID\r\n\t},\r\n\t\"Product\":{\r\n\t\t\"Product\":[{\r\n\t\t\t\"ProductId\":#PRODUCTID\t\t\r\n\t\t}]\r\n\t},\r\n\t\"Reason\":#REASON,\r\n\t\"Target\":{\r\n\t\t\"Target\":#TARGET,\r\n\t\t\"TargetDate\":\"\"\r\n\t}\r\n}"
-				strReq = strings.Replace(strReq, "#BYCHANNEL", "", -1)
-				strReq = strings.Replace(strReq, "#BYUSER", "BILL-COL", -1)
-				strReq = strings.Replace(strReq, "#CUSTOMERID", req.TVSCustomer, -1)
-				strReq = strings.Replace(strReq, "#PRODUCTID", strconv.Itoa(productID), -1)
-				strReq = strings.Replace(strReq, "#REASON", strconv.Itoa(reason), -1)
-				strReq = strings.Replace(strReq, "#TARGET", "0", -1)
-
-				req := []byte(strReq)
-
-				response, err := http.Post(cfg.reconnectURL, "application/json", bytes.NewBuffer(req))
-				if err != nil {
-					log.Printf("The HTTP request failed with error %s", err)
-				} else {
-					data, _ := ioutil.ReadAll(response.Body)
-					//fmt.Println(string(data))
-					//myReturn = json.Unmarshal(string(data))
-					err = json.Unmarshal(data, &serviceRes)
-					if err != nil {
-						//panic(err)
-						log.Printf("The HTTP response failed with error %s", err)
-					} else {
-						log.Printf("## Result >> %d %d %s", serviceRes.ProductID, serviceRes.ErrorCode, serviceRes.ErrorDesc)
-						result.Status = serviceRes.ResultValue
-						result.ErrorCode = serviceRes.ErrorCode
-						result.ErrorDescription = serviceRes.ErrorDesc
-					}
-				}
-			}
-
-			if !haveProduct {
-				result.Status = "true"
-				result.ErrorCode = 0
-				result.ErrorDescription = "No products to reconnect"
-			}
-		}
-	} else {
-		//### do something
-		// todo
-
-		if isCMDU == 1 {
-			result.Status = "true"
-			result.ErrorCode = 0
-			result.ErrorDescription = "This tvs profile is CMDU customer"
-		} else if isPaymentNoReconFee == 1 {
-			result.Status = "true"
-			result.ErrorCode = 0
-			result.ErrorDescription = "Payment not cover recon fee"
-		} else {
-			result.Status = "true"
-			result.ErrorCode = 0
-			result.ErrorDescription = "This customer not allow to reconnect"
-		}
-
-	}
-
-	return result, nil
 }
 
 // ReconnectPTP Service

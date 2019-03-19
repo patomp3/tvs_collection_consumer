@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 
+	sms "github.com/patomp3/smsservices"
 	"github.com/streadway/amqp"
 )
 
@@ -20,18 +21,14 @@ type ReceiveQueue struct {
 	QueueName string
 }
 
-// UpdateRequest for ...
-type UpdateRequest struct {
-	OrderTransID    string `json:"order_trans_id"`
-	OrderID         string `json:"order_id"`
-	Status          string `json:"status"`
-	ErrorCode       string `json:"error_code"`
-	ErrorDesc       string `json:"error_desc"`
-	ResponseMessage string `json:"response_message"`
+// UpdatePayloadRequest for ...
+type UpdatePayloadRequest struct {
+	OrderTransID string            `json:"order_trans_id"`
+	Payload      map[string]string `json:"payload"`
 }
 
-// UpdateResponse for ..
-type UpdateResponse struct {
+// UpdatePayloadResponse for ..
+type UpdatePayloadResponse struct {
 	OrderTransID     string `json:"order_trans_id"`
 	ErrorCode        string `json:"error_code"`
 	ErrorDescription string `json:"error_description"`
@@ -126,7 +123,8 @@ func (r ReceiveQueue) Receive(ch *amqp.Channel) {
 			var payload map[string]string
 			isError := 0
 			//log.Printf("Execute Store return cursor")
-			bResult := ExecuteStoreProcedure("QED", "begin PK_WFA_CORE.GetPayloadData(:1,:2); end;", orderTransID, sql.Out{Dest: &orderResult})
+			dbPED := sms.New(cfg.dbPED)
+			bResult := dbPED.ExecuteStoreProcedure("begin PK_WFA_CORE.GetPayloadData(:1,:2); end;", orderTransID, sql.Out{Dest: &orderResult})
 			if bResult && orderResult != nil {
 				values := make([]driver.Value, len(orderResult.Columns()))
 				if orderResult.Next(values) == nil {
@@ -144,52 +142,52 @@ func (r ReceiveQueue) Receive(ch *amqp.Channel) {
 			// not error
 			if isError == 0 {
 				//Read Json message
-				var req OrderRequest
-				req.Init(payload["tvscustomer"], payload["actioncode"], payload["activityreasoncode"])
+				var res OrderResponse
+				req := OrderRequest{payload["tvscustomer"], payload["actioncode"], payload["activityreasoncode"], orderTransID}
 
 				// Get ServiceCode from ActionCode & ActivityReasonCode
 				var rs driver.Rows
-				bResult = ExecuteStoreProcedure(cfg.dbATB2, "begin PK_IBS_CCBS_ORDER.BG_CCBS_ORDER_SERVICECODE(:1,:2,:3); end;", req.ActionCode,
+				dbATB2 := sms.New(cfg.dbATB2)
+				bResult = dbATB2.ExecuteStoreProcedure("begin PK_IBS_CCBS_ORDER.BG_CCBS_ORDER_SERVICECODE(:1,:2,:3); end;", req.ActionCode,
 					req.ActivityReasonCode, sql.Out{Dest: &rs})
 				if bResult && rs != nil {
 					values := make([]driver.Value, len(rs.Columns()))
 
 					// ok
 					for rs.Next(values) == nil {
-						var res OrderResponse
-
 						log.Printf("## Service Code = %s", values[0].(string))
 						switch serviceCode := values[0].(string); serviceCode {
 						case "CANCEL", "CANCELPTP":
-							res, _ = Cancel(req)
+							res, _ = req.Cancel()
 							log.Printf("## Cancel Result = %s %d, %s", res.Status, res.ErrorCode, res.ErrorDescription)
 						case "DISCONNECT":
-							res, _ = Disconnect(req)
+							res, _ = req.Disconnect("Disconnect")
 							log.Printf("## Disconnect Result = %s %d, %s", res.Status, res.ErrorCode, res.ErrorDescription)
 						case "DISCONNECTPTP":
-							res, _ = DisconnectPTP(req)
+							res, _ = req.Disconnect("DisconnectPTP")
 							log.Printf("## DisconnectPTP Result = %s %d, %s", res.Status, res.ErrorCode, res.ErrorDescription)
 						case "RECONNECT":
-							res, _ = Reconnect(req, "Reconnect")
+							res, _ = req.Reconnect("Reconnect")
 							log.Printf("## Reconnect Result = %s %d, %s", res.Status, res.ErrorCode, res.ErrorDescription)
 						case "RECONPTP":
-							res, _ = Reconnect(req, "ReconnectPTP")
+							res, _ = req.Reconnect("ReconnectPTP")
 							log.Printf("## ReconnectPTP Result = %s %d, %s", res.Status, res.ErrorCode, res.ErrorDescription)
 						}
 
-						//TODO : Notify result to wfa core
-						var result UpdateRequest
-						result.OrderTransID = orderTransID
-						result.OrderID = orderID
-						result.Status = "Z"
-						if res.ErrorCode != 0 {
-							result.Status = "E"
+						if res.IsSuspend == true {
+							sentToSuspendSubscriber(orderTransID, payload)
 						}
-						///result.Status = "Z"
-						result.ErrorCode = strconv.Itoa(res.ErrorCode)
-						result.ErrorDesc = res.ErrorDescription
-						notifyResult(result)
-						// End Notify Result
+
+						// Notify result to wfa core
+						notifyStatus := "Z"
+						if res.ErrorCode != 0 {
+							notifyStatus = "E"
+						}
+						resStr, _ := json.Marshal(res)
+						result := UpdateRequest{orderTransID, orderID, notifyStatus, strconv.Itoa(res.ErrorCode), res.ErrorDescription, string(resStr)}
+						result.NotifyResult()
+						_ = result
+
 					}
 				}
 			}
@@ -201,26 +199,41 @@ func (r ReceiveQueue) Receive(ch *amqp.Channel) {
 	<-forever
 }
 
-func notifyResult(req UpdateRequest) UpdateResponse {
-	var resultRes UpdateResponse
+func sentToSuspendSubscriber(orderTransID string, payload map[string]string) bool {
+	var myReturn bool
+
+	var req UpdatePayloadRequest
+	var res UpdatePayloadResponse
+
+	log.Printf("## Update payload to suspend sub to CCBS")
+
+	req.OrderTransID = orderTransID
+	req.Payload = payload
+	//Update Payload to send suspend at next queue
+	req.Payload["suspendsubscriber"] = "Y"
 
 	reqPost, _ := json.Marshal(req)
 
-	response, err := http.Post(cfg.updateOrderURL, "application/json", bytes.NewBuffer(reqPost))
+	response, err := http.Post(cfg.updatePayloadURL, "application/json", bytes.NewBuffer(reqPost))
 	if err != nil {
 		log.Printf("The HTTP request failed with error %s", err)
 	} else {
 		data, _ := ioutil.ReadAll(response.Body)
 		//fmt.Println(string(data))
 		//myReturn = json.Unmarshal(string(data))
-		err = json.Unmarshal(data, &resultRes)
+		err = json.Unmarshal(data, &res)
 		if err != nil {
 			//panic(err)
 			log.Printf("The HTTP response failed with error %s", err)
+			myReturn = false
 		} else {
-			log.Printf("## Result >> %v", resultRes)
+			log.Printf("## Result >> %v", res)
 		}
 	}
 
-	return resultRes
+	if res.OrderTransID != "" && res.ErrorCode == "0" {
+		myReturn = true
+	}
+
+	return myReturn
 }
