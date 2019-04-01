@@ -157,13 +157,13 @@ func (r ReceiveQueue) Receive(ch *amqp.Channel) {
 					for rs.Next(values) == nil {
 						log.Printf("## Service Code = %s", values[0].(string))
 						switch serviceCode := values[0].(string); serviceCode {
-						case "CANCEL", "CANCELPTP":
+						case "CANCEL":
 							res, _ = req.Cancel()
 							log.Printf("## Cancel Result = %s %d, %s", res.Status, res.ErrorCode, res.ErrorDescription)
 						case "DISCONNECT":
 							res, _ = req.Disconnect("Disconnect")
 							log.Printf("## Disconnect Result = %s %d, %s", res.Status, res.ErrorCode, res.ErrorDescription)
-						case "DISCONNECTPTP":
+						case "DISCONNECTPTP", "CANCELPTP":
 							res, _ = req.Disconnect("DisconnectPTP")
 							log.Printf("## DisconnectPTP Result = %s %d, %s", res.Status, res.ErrorCode, res.ErrorDescription)
 						case "RECONNECT":

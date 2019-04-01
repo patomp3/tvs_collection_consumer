@@ -3,6 +3,11 @@
 appName = "TVS_Collection_Consumer"
 env = "DEV-UAT62"
 
+### debugMode = Filename.log
+debugMode = "log-"
+### logMode = Y >> write log to stdout to keep in kibana
+logMode = "Y"
+
 [development]
 DBICC = "UAT62"
 DBATB2 = "QED"

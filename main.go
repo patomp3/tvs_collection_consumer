@@ -1,9 +1,11 @@
 package main
 
 import (
+	"io/ioutil"
 	"log"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -26,13 +28,13 @@ type appConfig struct {
 
 	env     string
 	appName string
+	log     string
+	debug   string
 }
 
 var cfg appConfig
 
 func main() {
-
-	log.Printf("##### Service Consumer Started #####")
 
 	// For no assign parameter env. using default to Test
 	var env string
@@ -64,7 +66,23 @@ func main() {
 
 		cfg.env = viper.GetString("env")
 		cfg.appName = viper.GetString("appName")
+		cfg.debug = viper.GetString("debugMode")
+		cfg.log = viper.GetString("logMode")
 
+		if cfg.debug != "" {
+			file, err := os.OpenFile(cfg.debug+time.Now().Format("2006-01-02")+".log", os.O_CREATE|os.O_APPEND, 0644)
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			defer file.Close()
+
+			log.SetOutput(file)
+		} else {
+			log.SetOutput(ioutil.Discard)
+		}
+
+		log.Printf("##### Service Consumer Started #####")
 		log.Printf("## Loading Configuration")
 		log.Printf("## Env\t= %s", env)
 	}

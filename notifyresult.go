@@ -31,6 +31,8 @@ type UpdateResponse struct {
 func (r UpdateRequest) NotifyResult() UpdateResponse {
 	var result UpdateResponse
 
+	log.Printf("## NotifyResult: Request = %v", r)
+
 	reqPost, _ := json.Marshal(r)
 
 	response, err := http.Post(cfg.updateOrderURL, "application/json", bytes.NewBuffer(reqPost))
@@ -49,20 +51,24 @@ func (r UpdateRequest) NotifyResult() UpdateResponse {
 		}
 	}
 
-	// Write log to stdoutput
-	appFunc := "NotifyResult"
-	jsonReq, _ := json.Marshal(r)
-	jsonRes, _ := json.Marshal(result)
+	log.Printf("## NotifyResult: Response = %v", result)
 
-	mLog := smslog.New(cfg.appName)
-	mLog.OrderDate = ""
-	mLog.OrderNo = ""
-	mLog.OrderType = ""
-	mLog.TVSNo = ""
-	tag := []string{cfg.env, cfg.appName + "-" + appFunc, "INFO"}
-	mLog.Tags = tag
-	mLog.PrintLog(smslog.INFO, appFunc, r.OrderTransID, string(jsonReq), string(jsonRes))
-	// End Write log
+	// Write log to stdoutput
+	if cfg.log == "Y" {
+		appFunc := "TVS_COLLECTION-NotifyResult"
+		jsonReq, _ := json.Marshal(r)
+		jsonRes, _ := json.Marshal(result)
+
+		mLog := smslog.New(cfg.appName)
+		mLog.OrderDate = ""
+		mLog.OrderNo = r.OrderTransID
+		mLog.OrderType = ""
+		mLog.TVSNo = ""
+		tag := []string{cfg.env, cfg.appName + "-" + appFunc, "INFO"}
+		mLog.Tags = tag
+		mLog.PrintLog(smslog.INFO, appFunc, r.OrderTransID, string(jsonReq), string(jsonRes))
+		// End Write log
+	}
 
 	return result
 }
