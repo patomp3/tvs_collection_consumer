@@ -91,4 +91,34 @@ func main() {
 	ch := q.Connect()
 	q.Receive(ch)
 
+	// test function
+	/*orderTransID := "c7e630f5-7e26-a9a1-96e0-b83874a623cb"
+	var orderResult driver.Rows
+	var payload map[string]string
+	//isError := 0
+	//log.Printf("Execute Store return cursor")
+	dbPED := sms.New(cfg.dbPED)
+	bResult := dbPED.ExecuteStoreProcedure("begin PK_WFA_CORE.GetPayloadData(:1,:2); end;", orderTransID, sql.Out{Dest: &orderResult})
+	if bResult && orderResult != nil {
+		values := make([]driver.Value, len(orderResult.Columns()))
+		if orderResult.Next(values) == nil {
+			payloadStr := values[1].(string)
+			log.Printf("payload = %s", payloadStr)
+
+			err := json.Unmarshal([]byte(payloadStr), &payload)
+			if err != nil {
+				//panic(err)
+				//isError = 1
+			}
+
+			log.Printf("%v", payloadStr)
+		}
+	}
+
+	var res OrderResponse
+	req := OrderRequest{payload["tvscustomer"], payload["actioncode"], payload["activityreasoncode"], orderTransID}
+
+	res, _ = req.Reconnect("Reconnect")
+
+	log.Printf("## Reconnect Result = %s %d, %s", res.Status, res.ErrorCode, res.ErrorDescription)*/
 }

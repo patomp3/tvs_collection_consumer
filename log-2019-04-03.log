@@ -1,0 +1,9 @@
+2019/04/03 14:40:12 ##### Service Consumer Started #####
+2019/04/03 14:40:12 ## Loading Configuration
+2019/04/03 14:40:12 ## Env	= development
+2019/04/03 14:40:19 payload = {"actioncode":"R","activityreasoncode":"DEFRS","suspendsubscriber":"Y","tvscustomer":"108141891"}
+2019/04/03 14:40:19 ## Reconnect Result =  0, 
+2019/04/03 15:16:20 ##### Service Consumer Started #####
+2019/04/03 15:16:20 ## Loading Configuration
+2019/04/03 15:16:20 ## Env	= development
+2019/04/03 15:16:21 ## [*] Waiting for messages. To exit press CTRL+C

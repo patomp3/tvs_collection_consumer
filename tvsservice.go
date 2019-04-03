@@ -15,6 +15,7 @@ import (
 
 	smslog "github.com/patomp3/smslogs"
 	sms "github.com/patomp3/smsservices"
+	goracle "gopkg.in/goracle.v2"
 )
 
 // OrderRequest Object
@@ -412,13 +413,13 @@ func (req OrderRequest) Reconnect(reconType string) (OrderResponse, error) {
 		spReason = 473
 	} else {
 		ccbsAccount := getCCBSAccountByTVSCustomer(req.TVSCustomer)
-		ccbsBalance := getCCBSAccountBalance(ccbsAccount)
+		ccbsBalance = getCCBSAccountBalance(ccbsAccount)
 
-		isPaymentNoReconFee = 1
-		// TODO - Sent Event 133 for payment not cover recon fee
-		isSuspend = true
-		isAllow = 0
-		_ = ccbsBalance
+		//log.Printf("CCBS Balance = %f", ccbsBalance)
+		// isPaymentNoReconFee = 1
+		// isSuspend = true
+		// isAllow = 0
+		// _ = ccbsBalance
 	}
 
 	if isAllow == 1 {
@@ -454,10 +455,18 @@ func (req OrderRequest) Reconnect(reconType string) (OrderResponse, error) {
 				if spReason != 0 {
 					reason = 473
 				}
-				reconfeeAmt := values[4].(float64)
+				reconfeeAmt, _ := strconv.ParseFloat(values[4].(goracle.Number).String(), 64)
+
+				log.Printf("CCBS Balance = %f, ReconAmt = %f", ccbsBalance, reconfeeAmt)
 				if ccbsBalance > reconfeeAmt {
 					// TODO - Sent Event 133 for all child account
+					isPaymentNoReconFee = 1
 					isSuspend = true
+
+					result.Status = "true"
+					result.ErrorCode = 0
+					result.ErrorDescription = "Payment not cover recon fee"
+					result.IsSuspend = isSuspend
 
 					break //end loop
 				}
